@@ -170,6 +170,7 @@ void Estimator::processImage(const map<int, vector<pair<int, Eigen::Matrix<doubl
                 last_R0 = Rs[0];
                 last_P0 = Ps[0];
                 
+                //cout<<last_P<<endl;
             }
             else
                 slideWindow();
@@ -611,7 +612,7 @@ void Estimator::double2vector()
     }
 }
 
-bool Estimator::failureDetection()
+bool Estimator::failureDetection() const
 {
     if (f_manager.last_track_num < 2)
     {
@@ -656,6 +657,9 @@ bool Estimator::failureDetection()
         ROS_INFO(" big delta_angle ");
         return true;
     }
+    
+    
+    
     return false;
 }
 

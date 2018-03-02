@@ -47,7 +47,7 @@ class Estimator
     void optimization();
     void vector2double();
     void double2vector();
-    bool failureDetection();
+    bool failureDetection() const;
 
 
     enum SolverFlag

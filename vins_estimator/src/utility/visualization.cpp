@@ -1,4 +1,5 @@
 #include "visualization.h"
+#include <tf/transform_listener.h>
 
 using namespace ros;
 using namespace Eigen;
@@ -298,38 +299,84 @@ void pubPointCloud(const Estimator &estimator, const std_msgs::Header &header)
 
 void pubTF(const Estimator &estimator, const std_msgs::Header &header)
 {
-    if( estimator.solver_flag != Estimator::SolverFlag::NON_LINEAR)
-        return;
     static tf::TransformBroadcaster br;
-    tf::Transform transform;
+    static tf::TransformListener tf_listen;
+
+    static int initialized = 50;
+    static bool last_failed = false;
+
+    static tf::StampedTransform offset;
+    static tf::StampedTransform last_tf;
+
+    /* 
+    if (estimator.failureDetection()) {
+        last_failed = true;
+        return;
+    }
+    */
+    if(estimator.solver_flag != Estimator::SolverFlag::NON_LINEAR)
+        return;
+
+    tf::Transform tfWorld2Body;
+    tf::Transform tfBody2Cam;
+
     tf::Quaternion q;
+
     // body frame
     Vector3d correct_t;
     Quaterniond correct_q;
     correct_t = estimator.Ps[WINDOW_SIZE];
     correct_q = estimator.Rs[WINDOW_SIZE];
 
-    transform.setOrigin(tf::Vector3(correct_t(0),
-                                    correct_t(1),
+    tfWorld2Body.setOrigin(tf::Vector3(-correct_t(1),
+                                    correct_t(0),
                                     correct_t(2)));
+
     q.setW(correct_q.w());
     q.setX(correct_q.x());
     q.setY(correct_q.y());
     q.setZ(correct_q.z());
-    transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, header.stamp, "world", "body"));
 
+    tfWorld2Body.setRotation(q);
+
+    br.sendTransform(tf::StampedTransform(tfWorld2Body, header.stamp, "world", "body"));
+    
     // camera frame
-    transform.setOrigin(tf::Vector3(estimator.tic[0].x(),
-                                    estimator.tic[0].y(),
+    tfBody2Cam.setOrigin(tf::Vector3(-estimator.tic[0].y(),
+                                    estimator.tic[0].x(),
                                     estimator.tic[0].z()));
     q.setW(Quaterniond(estimator.ric[0]).w());
     q.setX(Quaterniond(estimator.ric[0]).x());
     q.setY(Quaterniond(estimator.ric[0]).y());
     q.setZ(Quaterniond(estimator.ric[0]).z());
-    transform.setRotation(q);
-    br.sendTransform(tf::StampedTransform(transform, header.stamp, "body", "camera"));
+    tfBody2Cam.setRotation(q);
+    
+    br.sendTransform(tf::StampedTransform(tfBody2Cam, header.stamp, "body", "camera"));
 
+    // Publish VINS-Mono
+     tf::Transform tfWorld2Cam = tfWorld2Body * tfBody2Cam;
+
+    
+    static tf::Transform tfCam2GroundTruth;
+    if (initialized >= 0 && initialized-- == 0) {
+	    try {
+            tf::StampedTransform tfWorld2GroundTruth;
+
+		    tf_listen.lookupTransform("world", "ground_truth",
+	            			    ros::Time(0), tfWorld2GroundTruth); 
+
+            tfCam2GroundTruth = tfWorld2Cam.inverse() * tfWorld2GroundTruth;
+
+		    // initialized = true;
+	    } catch (tf::TransformException ex) {
+		    ROS_ERROR("%s", ex.what());
+	    }
+    }
+    
+
+     tf::Transform tfWorld2Mono = tfWorld2Cam * tfCam2GroundTruth;
+     br.sendTransform(tf::StampedTransform(tfWorld2Mono, header.stamp, "world", "vins_mono"));
+    
     nav_msgs::Odometry odometry;
     odometry.header = header;
     odometry.header.frame_id = "world";
@@ -342,7 +389,6 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     odometry.pose.pose.orientation.z = tmp_q.z();
     odometry.pose.pose.orientation.w = tmp_q.w();
     pub_extrinsic.publish(odometry);
-
 }
 
 void pubKeyframe(const Estimator &estimator)
