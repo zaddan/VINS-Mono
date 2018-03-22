@@ -16,6 +16,8 @@ ros::Publisher pub_keyframe_pose;
 ros::Publisher pub_keyframe_point;
 ros::Publisher pub_extrinsic;
 
+ros::Publisher pub_slam_lost;
+
 CameraPoseVisualization cameraposevisual(0, 1, 0, 1);
 CameraPoseVisualization keyframebasevisual(0.0, 0.0, 1.0, 1.0);
 static double sum_of_path = 0;
@@ -36,6 +38,7 @@ void registerPub(ros::NodeHandle &n)
     pub_keyframe_point = n.advertise<sensor_msgs::PointCloud>("keyframe_point", 1000);
     pub_extrinsic = n.advertise<nav_msgs::Odometry>("extrinsic", 1000);
     pub_relo_relative_pose=  n.advertise<nav_msgs::Odometry>("relo_relative_pose", 1000);
+    pub_slam_lost = n.advertise<std_msgs::Bool>("/slam_lost", 1);
 
     cameraposevisual.setScale(1);
     cameraposevisual.setLineWidth(0.05);
@@ -303,17 +306,18 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     static tf::TransformListener tf_listen;
 
     static int initialized = 50;
-    static bool last_failed = false;
+    // static bool last_failed = false;
 
-    static tf::StampedTransform offset;
-    static tf::StampedTransform last_tf;
-
-    /* 
-    if (estimator.failureDetection()) {
-        last_failed = true;
+    std_msgs::Bool slam_lost_msg;
+    if (initialized < 0 && estimator.failureDetection()) {
+        slam_lost_msg.data = true;
+        pub_slam_lost.publish(slam_lost_msg);
         return;
+    } else {
+        slam_lost_msg.data = false;
+        pub_slam_lost.publish(slam_lost_msg);
     }
-    */
+
     if(estimator.solver_flag != Estimator::SolverFlag::NON_LINEAR)
         return;
 
@@ -354,10 +358,9 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     br.sendTransform(tf::StampedTransform(tfBody2Cam, header.stamp, "body", "camera"));
 
     // Publish VINS-Mono
-     tf::Transform tfWorld2Cam = tfWorld2Body * tfBody2Cam;
+    tf::Transform tfWorld2Cam = tfWorld2Body * tfBody2Cam;
 
-    
-    static tf::Transform tfCam2GroundTruth;
+    static tf::Transform tfCam2GroundTruth({0, 0, 0, 1});
     if (initialized >= 0 && initialized-- == 0) {
 	    try {
             tf::StampedTransform tfWorld2GroundTruth;
@@ -374,8 +377,8 @@ void pubTF(const Estimator &estimator, const std_msgs::Header &header)
     }
     
 
-     tf::Transform tfWorld2Mono = tfWorld2Cam * tfCam2GroundTruth;
-     br.sendTransform(tf::StampedTransform(tfWorld2Mono, header.stamp, "world", "vins_mono"));
+    tf::Transform tfWorld2Mono = tfWorld2Cam * tfCam2GroundTruth;
+    br.sendTransform(tf::StampedTransform(tfWorld2Mono, header.stamp, "world", "vins_mono"));
     
     nav_msgs::Odometry odometry;
     odometry.header = header;
